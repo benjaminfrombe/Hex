@@ -1196,7 +1196,15 @@ actor RecordingClientLive {
     )
     let recordingDuration = stoppedAt.timeIntervalSince(session.startedAt)
     let wasRecording = recorder?.isRecording == true
-    recorder?.stop()
+    
+    // CRITICAL FIX: Stop and DESTROY the recorder to release CoreAudio connection
+    // We cannot reuse the same recorder instance after stop() - must create fresh one
+    if let recorder = recorder {
+      recorder.stop()
+      recordingLogger.debug("Stopped recorder")
+    }
+    self.recorder = nil  // DESTROY to fully release CoreAudio connection
+    
     stopMeterTask()
     endRecordingSession()
     clearActiveRecordingMetadata()
@@ -1218,6 +1226,11 @@ actor RecordingClientLive {
     }
 
     if didCopyRecording {
+      // CRITICAL: Give CoreAudio time to fully release the old recorder's connection
+      // before creating and priming a new one. Without this delay, CoreAudio may
+      // keep the old connection active, causing 10% CPU leak.
+      try? await Task.sleep(for: .milliseconds(200))
+      
       do {
         if session.backend == .recorderFallback {
           try primeRecorderForNextSession()
@@ -1365,6 +1378,9 @@ actor RecordingClientLive {
       recordingLogger.notice("Recorder already primed, skipping prepareToRecord()")
     }
 
+    // Enable metering for recording session
+    recorder.isMeteringEnabled = true
+    
     isRecorderPrimedForNextSession = false
     return recorder
   }
@@ -1375,8 +1391,12 @@ actor RecordingClientLive {
     }
 
     let recorder = try AVAudioRecorder(url: recordingURL, settings: recorderSettings)
-    recorder.isMeteringEnabled = true
+    // OPTIMIZATION: Don't enable metering by default
+    // It will be enabled in ensureRecorderReadyForRecording() when actually recording
+    // Metering can cause continuous audio monitoring even when idle
+    recorder.isMeteringEnabled = false
     self.recorder = recorder
+    recordingLogger.debug("Created new AVAudioRecorder instance")
     return recorder
   }
 
@@ -1400,6 +1420,8 @@ actor RecordingClientLive {
   }
 
   private func primeRecorderForNextSession() throws {
+    // Recorder should be nil at this point (destroyed in stopRecording)
+    // Create a fresh recorder and prime it
     let recorder = try recorderOrCreate()
     guard recorder.prepareToRecord() else {
       isRecorderPrimedForNextSession = false
@@ -1409,7 +1431,7 @@ actor RecordingClientLive {
 
     isRecorderPrimedForNextSession = true
     lastPrimedDeviceID = getDefaultInputDevice()
-    recordingLogger.debug("Recorder primed for device \(self.lastPrimedDeviceID ?? 0)")
+    recordingLogger.debug("Fresh recorder created and primed for device \(self.lastPrimedDeviceID ?? 0)")
   }
 
   func startMeterTask() {
