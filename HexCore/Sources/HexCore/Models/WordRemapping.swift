@@ -67,10 +67,11 @@ public enum WordRemappingApplier {
 			} else {
 				pattern = "(?<!\\w)\(escaped)(?!\\w)"
 			}
-			let replacement = remapping.replacement + (remapping.appendNewline ? "\n" : "")
+			let replacement = processEscapeSequences(remapping.replacement)
+			let replacementWithNewline = replacement + (remapping.appendNewline ? "\n" : "")
 			output = output.replacingOccurrences(
 				of: pattern,
-				with: replacement,
+				with: replacementWithNewline,
 				options: [.regularExpression, .caseInsensitive]
 			)
 		}
@@ -82,5 +83,16 @@ public enum WordRemappingApplier {
 		guard trimmed.count == 1 else { return false }
 		let punctuation: Set<Character> = [",", ".", "!", "?", ":", ";"]
 		return trimmed.first.map { punctuation.contains($0) } ?? false
+	}
+
+	/// Processes escape sequences in a string: `\n` → newline, `\t` → tab, `\\` → backslash
+	private static func processEscapeSequences(_ string: String) -> String {
+		let placeholder = "\u{0000}"
+		return string
+			.replacingOccurrences(of: "\\\\", with: placeholder)
+			.replacingOccurrences(of: "\\n", with: "\n")
+			.replacingOccurrences(of: "\\t", with: "\t")
+			.replacingOccurrences(of: "\\r", with: "\r")
+			.replacingOccurrences(of: placeholder, with: "\\")
 	}
 }
