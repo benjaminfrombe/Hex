@@ -448,10 +448,15 @@ class KeyEventMonitorClientLive {
 
   private func handleTapDisabledEvent(_ type: CGEventType) {
     let reason = type == .tapDisabledByTimeout ? "timeout" : "userInput"
-    logger.error("Event tap disabled by \(reason); scheduling restart.")
-    Task { [weak self] in
+    logger.error("Event tap disabled by \(reason); re-enabling.")
+    Task { @MainActor [weak self] in
       guard let self else { return }
-      await self.refreshMonitoringState(reason: "tap_disabled_\(reason)")
+      if let port = self.eventTapPort {
+        CGEvent.tapEnable(tap: port, enable: true)
+        logger.info("Re-enabled event tap after \(reason).")
+      } else {
+        await self.refreshMonitoringState(reason: "tap_disabled_\(reason)")
+      }
     }
   }
 
